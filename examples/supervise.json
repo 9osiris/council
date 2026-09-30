@@ -1,0 +1,1 @@
+{"agents":[{"name":"w1","role":"a technical writer, clear and concrete"},{"name":"w2","role":"a technical writer, clear and concrete"}],"params":{"task":"write a short launch post for council, a multi-agent orchestration tool"},"pattern":"supervise","supervisor":{"name":"boss","role":"breaks work into subtasks and merges results into one voice"}}
