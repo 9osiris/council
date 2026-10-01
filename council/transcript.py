@@ -36,6 +36,11 @@ def to_markdown(result):
     lines.append("- seconds: %.1f" % result.seconds)
     lines.append("- tokens: %d in / %d out" % (
         usage["prompt_tokens"], usage["completion_tokens"]))
+    spend = result.spend_by_agent()
+    if spend:
+        lines.append("- spend by agent: %s" % ", ".join(
+            "%s=%d" % (name, row["total_tokens"])
+            for name, row in spend.items()))
     if result.extra:
         lines.append("")
         lines.append("## extra")
