@@ -40,6 +40,17 @@ class RunResult:
                 total[k] += t.usage.get(k, 0)
         return total
 
+    def spend_by_agent(self):
+        """total tokens per speaker, in first-seen order."""
+        per = {}
+        for t in self.turns:
+            row = per.setdefault(t.speaker, {
+                "prompt_tokens": 0, "completion_tokens": 0,
+                "total_tokens": 0})
+            for k in row:
+                row[k] += t.usage.get(k, 0)
+        return per
+
 
 def merge_usage(a, b):
     out = dict(a)
