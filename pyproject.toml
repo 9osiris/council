@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "council"
-version = "1.0.0"
+version = "1.2.0"
 description = "multi-agent orchestration for openai-compatible apis: debate, vote, supervise, pipeline, fanout"
 readme = "README.md"
 requires-python = ">=3.9"
