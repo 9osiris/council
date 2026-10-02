@@ -26,7 +26,21 @@ class ChatClient:
 
     def chat(self, messages, model=None, temperature=None, max_tokens=None):
         """send messages, return (text, usage dict). retries 429/5xx."""
+        text, usage, _ = self.chat_tools(messages, None, model=model,
+                                         temperature=temperature,
+                                         max_tokens=max_tokens)
+        return text, usage
+
+    def chat_tools(self, messages, tools, model=None, temperature=None,
+                   max_tokens=None):
+        """like chat, but the model may request tool calls.
+
+        tools is a list of openai-style tool specs (Tool.schema()).
+        returns (text, usage, tool_calls) where each call is a dict with
+        id, name, arguments, and arguments_raw."""
         body = {"model": model or self.model, "messages": messages}
+        if tools:
+            body["tools"] = tools
         if temperature is not None:
             body["temperature"] = temperature
         if max_tokens is not None:
@@ -44,7 +58,7 @@ class ChatClient:
                     data=data, headers=headers)
                 with urllib.request.urlopen(req, timeout=self.timeout) as r:
                     payload = json.loads(r.read().decode())
-                return self._parse(payload)
+                return self._parse_tools(payload)
             except urllib.error.HTTPError as e:
                 last_err = ApiError("http %d: %s" % (e.code, e.read()[:200]))
                 if e.code not in RETRYABLE or attempt == self.max_retries:
@@ -58,14 +72,37 @@ class ChatClient:
 
     @staticmethod
     def _parse(payload):
+        text, usage, _ = ChatClient._parse_tools(payload)
+        return text, usage
+
+    @staticmethod
+    def _parse_tools(payload):
         try:
             msg = payload["choices"][0]["message"]
             text = msg.get("content") or ""
         except (KeyError, IndexError, TypeError):
             raise ApiError("unexpected response shape")
         usage = payload.get("usage") or {}
+        calls = []
+        for tc in msg.get("tool_calls") or []:
+            fn = tc.get("function") or {}
+            raw = fn.get("arguments") or "{}"
+            try:
+                arguments = (json.loads(raw) if isinstance(raw, str)
+                             else raw)
+            except (ValueError, TypeError):
+                arguments = {}
+            if not isinstance(arguments, dict):
+                arguments = {}
+            calls.append({
+                "id": tc.get("id") or "",
+                "name": fn.get("name") or "",
+                "arguments": arguments,
+                "arguments_raw": (raw if isinstance(raw, str)
+                                  else json.dumps(raw)),
+            })
         return text, {
             "prompt_tokens": usage.get("prompt_tokens", 0),
             "completion_tokens": usage.get("completion_tokens", 0),
             "total_tokens": usage.get("total_tokens", 0),
-        }
+        }, calls
