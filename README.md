@@ -119,6 +119,57 @@ budgets also work from config files (`budget_tokens`, `prompt_price`,
 `completion_price` per agent). per-agent totals show up in the saved
 markdown under stats as `spend by agent`.
 
+## tools
+
+agents can carry tools. the model calls them mid-turn with openai-style
+function calling, council runs them locally, the results go back to the
+model. works inside every pattern; tool calls show up in the transcript
+as their own turns.
+
+built-ins:
+
+- `calc` - plain arithmetic, nothing else. it parses the expression into
+  an ast, it never evals code.
+
+```python
+from council import Agent, ChatClient, debate
+from council.tools import resolve
+
+client = ChatClient(model="gpt-4o-mini")
+maya = Agent("maya", "a pragmatic engineer", tools=resolve(["calc"]))
+result = debate(client, "is 2**10 really 1024?", [maya], rounds=1)
+```
+
+agents also take `max_tool_steps` (default 3): how many tool-call rounds
+before the model has to just answer. every tool round counts against the
+token budget, same as any other turn.
+
+from a config file, name tools per agent:
+
+```json
+{"name": "maya", "role": "a pragmatic engineer",
+ "tools": ["calc"], "max_tool_steps": 5}
+```
+
+from the cli:
+
+```bash
+council debate "is 2**10 really 1024?" --agent "maya: ..." --tools calc
+```
+
+for shared state between agents, bind the blackboard tools to your
+instance (config files can only name instance-free tools like `calc`):
+
+```python
+from council import Blackboard, blackboard_tools
+
+bb = Blackboard()
+maya = Agent("maya", "keeps notes", tools=blackboard_tools(bb, author="maya"))
+```
+
+register your own with `council.tools.register(Tool(...))` and they become
+usable everywhere `calc` is.
+
 ## library use
 
 ```python
@@ -144,15 +195,24 @@ patterns don't force it on you; use it when agents need shared state.
   back to the first option mentioned in the text. no parse, no vote.
 - supervise asks for `SUBTASK:` lines; if the supervisor rambles instead,
   it falls back to one generic subtask per worker so the run still works.
-- retries 429/5xx with backoff. no streaming, no tools, no magic.
+- retries 429/5xx with backoff. no streaming, no magic.
 
 ## tests
 
 ```bash
 python tests/test_council.py
+python tests/test_tools.py
 ```
 
-70 checks: a scripted fake client drives all five patterns (debate shape, vote tallies incl. ties and abstains, supervise split/merge, pipeline order, fanout reduce), budget enforcement (caps, pre-spent refusal, cost math, per-agent spend reporting), plus the real http client against a local fake openai server (response parsing, retry on 500, no retry on 400).
+119 checks: a scripted fake client drives all five patterns (debate shape,
+vote tallies incl. ties and abstains, supervise split/merge, pipeline
+order, fanout reduce), budget enforcement (caps, pre-spent refusal,
+cost math, per-agent spend reporting), tool calling (schema, safe calc,
+blackboard tools, tool error handling, max_tool_steps cap, budget
+enforcement across tool rounds, tool turns inside debate and supervise,
+config and cli wiring), plus the real http client against a local fake
+openai server (response parsing, tool_calls parsing, retry on 500,
+no retry on 400).
 
 ## license
 
