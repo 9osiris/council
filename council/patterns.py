@@ -11,8 +11,19 @@ from .transcript import render_transcript
 
 def _timed(agent, prompt, client):
     start = time.time()
-    text, usage = agent.say(prompt, client)
-    return text, usage, time.time() - start
+    text, usage, tool_turns = agent.act(prompt, client)
+    return text, usage, tool_turns, time.time() - start
+
+
+def _add(result, agent, text, usage, tool_turns, secs, kind, out=None):
+    """tool turns land first (they happened mid-turn), then the main turn."""
+    for t in tool_turns:
+        result.add(t)
+        if out:
+            out(t.speaker, t.text)
+    result.add(Turn(agent.name, text, usage, secs, kind=kind))
+    if out:
+        out(agent.name, text)
 
 
 def _history_text(pairs):
@@ -30,12 +41,10 @@ def debate(client, question, agents, rounds=3, judge=None, out=None):
                 "Round %d of %d. Respond as %s: make your point, "
                 "answer the others directly, stay under 150 words."
                 % (_history_text(pairs), r + 1, rounds, agent.name))
-            text, usage, secs = _timed(agent, prompt, client)
+            text, usage, tool_turns, secs = _timed(agent, prompt, client)
             pairs.append((agent.name, text))
-            result.add(Turn(agent.name, text, usage, secs,
-                            kind="round %d" % (r + 1)))
-            if out:
-                out(agent.name, text)
+            _add(result, agent, text, usage, tool_turns, secs,
+                 "round %d" % (r + 1), out)
     judge = judge or Agent(
         "moderator",
         "a neutral moderator. read debates and write a clear final verdict.")
@@ -43,8 +52,8 @@ def debate(client, question, agents, rounds=3, judge=None, out=None):
         "Full debate transcript:\n\n%s\n\n"
         "Write the final verdict: which side won and why, in under 200 words. "
         "End with a one-line conclusion." % _history_text(pairs))
-    text, usage, secs = _timed(judge, prompt, client)
-    result.add(Turn(judge.name, text, usage, secs, kind="verdict"))
+    text, usage, tool_turns, secs = _timed(judge, prompt, client)
+    _add(result, judge, text, usage, tool_turns, secs, "verdict")
     return result.finish(text)
 
 
@@ -77,12 +86,10 @@ def vote(client, topic, options, agents, out=None):
                 "Pick exactly one. Reply with a line 'VOTE: <option name>' "
                 "followed by your reasoning in under 100 words."
                 % (topic, "\n".join("- " + c for c in candidates)))
-            text, usage, secs = _timed(agent, prompt, client)
+            text, usage, tool_turns, secs = _timed(agent, prompt, client)
             pick = _parse_vote(text, candidates)
             votes[agent.name] = (pick, text)
-            result.add(Turn(agent.name, text, usage, secs, kind="vote"))
-            if out:
-                out(agent.name, text)
+            _add(result, agent, text, usage, tool_turns, secs, "vote", out)
         return votes
 
     votes = one_round(options)
@@ -126,8 +133,8 @@ def supervise(client, task, supervisor, workers, out=None, max_workers=4):
         "Task: %s\n\nBreak this into concrete subtasks a worker agent can do "
         "alone. Reply with one line per subtask starting with 'SUBTASK:'. "
         "Aim for %d subtasks." % (task, len(workers)))
-    text, usage, secs = _timed(supervisor, prompt, client)
-    result.add(Turn(supervisor.name, text, usage, secs, kind="plan"))
+    text, usage, tool_turns, secs = _timed(supervisor, prompt, client)
+    _add(result, supervisor, text, usage, tool_turns, secs, "plan")
     subtasks = _parse_subtasks(text)
     if not subtasks:
         # supervisor rambled: fall back to one subtask per worker
@@ -139,25 +146,23 @@ def supervise(client, task, supervisor, workers, out=None, max_workers=4):
         p = ("Overall task: %s\n\nYour subtask: %s\n\n"
              "Do it and report the result concretely, under 200 words."
              % (task, sub))
-        t, u, s = _timed(worker, p, client)
-        return worker.name, sub, t, u, s
+        t, u, tt, s = _timed(worker, p, client)
+        return worker, sub, t, u, tt, s
 
     pairs = [(workers[i % len(workers)], sub)
              for i, sub in enumerate(subtasks)]
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         done = list(pool.map(do_one, pairs))
-    for name, sub, t, u, s in done:
-        result.add(Turn(name, t, u, s, kind="subtask: " + sub[:60]))
-        if out:
-            out(name, t)
+    for worker, sub, t, u, tt, s in done:
+        _add(result, worker, t, u, tt, s, "subtask: " + sub[:60], out)
 
-    joined = "\n\n".join("Worker %s did '%s':\n%s" % (n, s, t)
-                         for n, s, t, _, _ in done)
+    joined = "\n\n".join("Worker %s did '%s':\n%s" % (w.name, s, t)
+                         for w, s, t, _, _, _ in done)
     prompt = ("Original task: %s\n\nSubtask results:\n\n%s\n\n"
               "Merge these into one final answer, resolving conflicts, "
               "under 300 words." % (task, joined))
-    text, usage, secs = _timed(supervisor, prompt, client)
-    result.add(Turn(supervisor.name, text, usage, secs, kind="merge"))
+    text, usage, tool_turns, secs = _timed(supervisor, prompt, client)
+    _add(result, supervisor, text, usage, tool_turns, secs, "merge")
     result.extra = {"subtasks": subtasks}
     return result.finish(text)
 
@@ -175,11 +180,9 @@ def pipeline(client, task, stages, out=None):
                       "You are step %d (%s). Take the previous output, apply "
                       "your step, output only the result."
                       % (task, current, i + 1, stage.role))
-        text, usage, secs = _timed(stage, prompt, client)
-        result.add(Turn(stage.name, text, usage, secs,
-                        kind="stage %d" % (i + 1)))
-        if out:
-            out(stage.name, text)
+        text, usage, tool_turns, secs = _timed(stage, prompt, client)
+        _add(result, stage, text, usage, tool_turns, secs,
+             "stage %d" % (i + 1), out)
         current = text
     return result.finish(current)
 
@@ -191,23 +194,22 @@ def fanout(client, task, workers, reducer=None, out=None, max_workers=8):
     def do_one(worker):
         prompt = ("Task: %s\n\nAnswer independently, under 200 words."
                   % task)
-        t, u, s = _timed(worker, prompt, client)
-        return worker.name, t, u, s
+        t, u, tt, s = _timed(worker, prompt, client)
+        return worker, t, u, tt, s
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         done = list(pool.map(do_one, workers))
-    for name, t, u, s in done:
-        result.add(Turn(name, t, u, s, kind="independent"))
-        if out:
-            out(name, t)
+    for worker, t, u, tt, s in done:
+        _add(result, worker, t, u, tt, s, "independent", out)
 
     reducer = reducer or Agent(
         "merger", "a neutral editor. merge independent drafts into one "
                   "answer, keeping the best of each.")
-    joined = "\n\n".join("**%s:**\n%s" % (n, t) for n, t, _, _ in done)
+    joined = "\n\n".join("**%s:**\n%s" % (w.name, t)
+                         for w, t, _, _, _ in done)
     prompt = ("Task: %s\n\nIndependent answers:\n\n%s\n\n"
               "Merge into one final answer, keeping the strongest points "
               "of each, under 300 words." % (task, joined))
-    text, usage, secs = _timed(reducer, prompt, client)
-    result.add(Turn(reducer.name, text, usage, secs, kind="merge"))
+    text, usage, tool_turns, secs = _timed(reducer, prompt, client)
+    _add(result, reducer, text, usage, tool_turns, secs, "merge")
     return result.finish(text)

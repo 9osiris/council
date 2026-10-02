@@ -9,6 +9,7 @@ from .agent import Agent
 from .client import ChatClient, ApiError
 from .config import example_config, load_config
 from .patterns import debate, fanout, pipeline, supervise, vote
+from .tools import resolve as resolve_tools
 from .transcript import to_markdown
 
 
@@ -31,6 +32,17 @@ def add_common(p):
                    help="write the full transcript as markdown")
     p.add_argument("--quiet", action="store_true",
                    help="print only the final answer")
+    p.add_argument("--tools", default=None,
+                   help="comma-separated tool names for the agents, e.g. calc")
+
+
+def give_tools(agents, args):
+    """attach --tools to the participant agents, if the flag was given."""
+    if args.tools:
+        tools = resolve_tools(
+            [n.strip() for n in args.tools.split(",") if n.strip()])
+        for agent in agents:
+            agent.tools = list(tools)
 
 
 def add_agents(p, flag="--agent", dest="agents"):
@@ -112,6 +124,7 @@ def cmd_debate(args):
         Agent("pro", "argue in favor, steelman the motion"),
         Agent("con", "argue against, steelman the opposition"),
     ]
+    give_tools(agents, args)
     judge = parse_agent(args.judge) if args.judge else None
     result = debate(make_client(args), args.question, agents,
                     rounds=args.rounds, judge=judge, out=printer(args.quiet))
@@ -124,6 +137,7 @@ def cmd_vote(args):
         sys.exit("vote needs at least one --agent")
     if len(args.option) < 2:
         sys.exit("vote needs at least two --option")
+    give_tools(agents, args)
     result = vote(make_client(args), args.topic, args.option, agents,
                   out=printer(args.quiet))
     finish(result, args)
@@ -134,6 +148,7 @@ def cmd_supervise(args):
     workers = [parse_agent(s) for s in args.worker]
     if not workers:
         sys.exit("supervise needs at least one --worker")
+    give_tools(workers, args)
     result = supervise(make_client(args), args.task, supervisor, workers,
                        out=printer(args.quiet))
     finish(result, args)
@@ -143,6 +158,7 @@ def cmd_pipeline(args):
     stages = [parse_agent(s) for s in args.stage]
     if not stages:
         sys.exit("pipeline needs at least one --stage")
+    give_tools(stages, args)
     result = pipeline(make_client(args), args.task, stages,
                       out=printer(args.quiet))
     finish(result, args)
@@ -152,6 +168,7 @@ def cmd_fanout(args):
     workers = [parse_agent(s) for s in args.worker]
     if not workers:
         sys.exit("fanout needs at least one --worker")
+    give_tools(workers, args)
     reducer = parse_agent(args.reducer) if args.reducer else None
     result = fanout(make_client(args), args.task, workers, reducer=reducer,
                     out=printer(args.quiet))
