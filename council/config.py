@@ -38,8 +38,10 @@ def example_config():
             "rounds": 2,
         },
         "agents": [
-            {"name": "maya", "role": "a pragmatic senior engineer who ships fast and trusts tests as contracts"},
-            {"name": "theo", "role": "a careful systems thinker who distrusts shortcuts and values correctness proofs"},
+            {"name": "maya", "role": "a pragmatic senior engineer who ships fast and trusts tests as contracts",
+              "tools": ["calc"]},
+            {"name": "theo", "role": "a careful systems thinker who distrusts shortcuts and values correctness proofs",
+              "budget_tokens": 4000},
         ],
         "judge": {"name": "moderator", "role": "a neutral moderator"},
     }
